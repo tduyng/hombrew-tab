@@ -1,0 +1,73 @@
+name: Update Brew Formula
+run-name: Update ${{ github.event.inputs.formula }} to ${{ github.event.inputs.tag }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      formula:
+        description: 'Formula name (e.g., codeme)'
+        required: true
+        type: string
+      tag:
+        description: 'Release tag to update formula for (e.g., v0.0.1)'
+        required: true
+        type: string
+      repository:
+        description: 'Source repository (e.g., tduyng/codeme)'
+        required: true
+        type: string
+
+jobs:
+  update-formula:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout tap repository
+        uses: actions/checkout@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Setup Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+      
+      - name: Update formula
+        run: |
+          FORMULA="${{ github.event.inputs.formula }}"
+          TAG="${{ github.event.inputs.tag }}"
+          REPO="${{ github.event.inputs.repository }}"
+          VERSION="${TAG#v}"
+          
+          for os in darwin linux; do
+            for arch in arm64 amd64; do
+              URL="https://github.com/${REPO}/releases/download/${TAG}/${FORMULA}_${VERSION}_${os}_${arch}.tar.gz"
+              FILE="${FORMULA}_${VERSION}_${os}_${arch}.tar.gz"
+              curl -fsSL "${URL}" -o "${FILE}"
+              SHA=$(shasum -a 256 "${FILE}" | awk '{print $1}')
+              rm -f "${FILE}"
+              
+              if [ "$os" = "darwin" ] && [ "$arch" = "arm64" ]; then
+                SHA_DARWIN_ARM64=${SHA}
+              elif [ "$os" = "darwin" ] && [ "$arch" = "amd64" ]; then
+                SHA_DARWIN_AMD64=${SHA}
+              elif [ "$os" = "linux" ] && [ "$arch" = "arm64" ]; then
+                SHA_LINUX_ARM64=${SHA}
+              elif [ "$os" = "linux" ] && [ "$arch" = "amd64" ]; then
+                SHA_LINUX_AMD64=${SHA}
+              fi
+            done
+          done
+          
+          # Update version (e.g., "0.0.2" -> "0.0.3")
+          sed -i '' "s/version \".*\"/version \"${VERSION}\"/" "Formula/${FORMULA}.rb"
+          
+          # Update sha256 for each platform (macOS arm64, macOS amd64, Linux arm64, Linux amd64)
+          # 0,/pattern/ means replace only first match, then each subsequent sed replaces next sha256
+          sed -i '' "0,/sha256 \".*\"/s//sha256 \"${SHA_DARWIN_ARM64}\"/" "Formula/${FORMULA}.rb"
+          sed -i '' "0,/sha256 \".*\"/s//sha256 \"${SHA_DARWIN_AMD64}\"/" "Formula/${FORMULA}.rb"
+          sed -i '' "0,/sha256 \".*\"/s//sha256 \"${SHA_LINUX_ARM64}\"/" "Formula/${FORMULA}.rb"
+          sed -i '' "0,/sha256 \".*\"/s//sha256 \"${SHA_LINUX_AMD64}\"/" "Formula/${FORMULA}.rb"
+          
+          git add "Formula/${FORMULA}.rb"
+          git commit -m "chore(${FORMULA}): update to ${TAG}" || exit 0
+          git push
